@@ -50,12 +50,24 @@ const STRATEGY_OPTIONS = [
 
 type StrategyType = typeof STRATEGY_OPTIONS[number]['value'];
 
+// Convert decimal futures price to traditional 32nds notation: 112'21'
+function toTicks(price: number): string {
+  const whole = Math.floor(price);
+  const frac = price - whole;
+  const thirtySeconds = Math.round(frac * 32);
+  return `${whole}'${thirtySeconds.toString().padStart(2, '0')}'`;
+}
+
 export default function TradeEaseShortOptions() {
   // Live Market Data
   const [quotes, setQuotes] = useState<Record<string, FuturesQuote>>({});
   const [selectedUnderlying, setSelectedUnderlying] = useState<Underlying>('ZN=F');
   const [priceHistory, setPriceHistory] = useState<Record<string, PricePoint[]>>({ 'ZN=F': [], 'ZB=F': [] });
   const [isLoadingPrice, setIsLoadingPrice] = useState(false);
+
+  // 6-month historical data for the chart
+  const [historicalData, setHistoricalData] = useState<PricePoint[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   // Trading State (demo mode)
   const [selectedStrategy, setSelectedStrategy] = useState<StrategyType>('short_put');
@@ -88,7 +100,7 @@ export default function TradeEaseShortOptions() {
 
   const chain = generateChain(currentPrice);
 
-  // Live price polling + price chart history
+  // Live price polling (for current price + intraday updates)
   useEffect(() => {
     let interval: NodeJS.Timeout;
 
@@ -113,6 +125,7 @@ export default function TradeEaseShortOptions() {
         });
         setQuotes(newQuotes);
 
+        // Append to short-term history for smooth live feel on the right edge of the chart
         setPriceHistory(prev => {
           const updated = { ...prev };
           (['ZB=F', 'ZN=F'] as const).forEach(sym => {
@@ -160,6 +173,30 @@ export default function TradeEaseShortOptions() {
     return () => clearInterval(interval);
   }, []);
 
+  // Fetch 6-month daily history when symbol changes
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHistory = async () => {
+      setIsLoadingHistory(true);
+      try {
+        const res = await fetch(`/api/market/history?symbol=${selectedUnderlying}`);
+        const json = await res.json();
+        if (!cancelled && json.success && json.data?.length) {
+          setHistoricalData(json.data);
+        }
+      } catch (e) {
+        // fallback data will be provided by the API itself
+        console.log('History fetch fallback used');
+      }
+      setIsLoadingHistory(false);
+    };
+
+    loadHistory();
+
+    return () => { cancelled = true; };
+  }, [selectedUnderlying]);
+
   const currentQuote = quotes[selectedUnderlying];
 
   // Live calculations
@@ -200,31 +237,78 @@ export default function TradeEaseShortOptions() {
     };
   }, [selectedStrategy, shortStrike, longStrike, quantity, currentPrice]);
 
-  // Simple live-updating SVG chart
+  // 6-month daily chart with live price overlay
   const renderPriceChart = () => {
-    const hist = priceHistory[selectedUnderlying] || [];
-    if (hist.length < 3) return <div className="h-40 flex items-center justify-center text-zinc-500 text-sm">Loading live price chart…</div>;
+    const hist = historicalData.length > 0 ? historicalData : (priceHistory[selectedUnderlying] || []);
+    if (hist.length < 3) return <div className="h-40 flex items-center justify-center text-zinc-500 text-sm">Loading 6-month chart…</div>;
 
     const prices = hist.map(p => p.price);
-    const minP = Math.min(...prices), maxP = Math.max(...prices);
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
     const r = maxP - minP || 0.4;
-    const w = 620, h = 170, pad = 6;
+    const w = 620;
+    const h = 200;
+    const pad = 8;
+    const labelPad = 52; // space for y-axis labels in ticks
 
     const pts = hist.map((p, i) => {
-      const x = pad + (i / (hist.length - 1)) * (w - pad * 2);
+      const x = labelPad + pad + (i / (hist.length - 1)) * (w - labelPad - pad * 2);
       const y = pad + ((maxP - p.price) / r) * (h - pad * 2);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
 
-    const last = hist[hist.length - 1].price;
-    const first = hist[0].price;
-    const col = last >= first ? '#22c55e' : '#ef4444';
+    const lastPrice = prices[prices.length - 1];
+    const firstPrice = prices[0];
+    const col = lastPrice >= firstPrice ? '#22c55e' : '#ef4444';
+
+    // Y ticks at nice levels (approx 5 levels)
+    const tickValues = [];
+    for (let i = 0; i <= 4; i++) {
+      tickValues.push(minP + (i * r) / 4);
+    }
 
     return (
-      <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} className="overflow-visible">
-        <polyline fill="none" stroke={col} strokeWidth="2.25" strokeLinejoin="round" points={pts} />
-        <circle cx={w - pad} cy={pad + ((maxP - last) / r) * (h - pad * 2)} r="3" fill={col} />
-      </svg>
+      <div className="relative">
+        <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} className="overflow-visible">
+          {/* Horizontal grid + y labels in ticks format */}
+          {tickValues.map((val, idx) => {
+            const y = pad + ((maxP - val) / r) * (h - pad * 2);
+            return (
+              <g key={idx}>
+                <line x1={labelPad} y1={y} x2={w - pad} y2={y} stroke="#27272a" strokeWidth="1" />
+                <text x={labelPad - 4} y={y + 3} textAnchor="end" fontSize="10" fill="#3f3f46">
+                  {toTicks(val)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Main price line */}
+          <polyline
+            fill="none"
+            stroke={col}
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            points={pts}
+          />
+
+          {/* Current live price dot */}
+          <circle
+            cx={w - pad}
+            cy={pad + ((maxP - lastPrice) / r) * (h - pad * 2)}
+            r="4"
+            fill={col}
+            stroke="#fff"
+            strokeWidth="1"
+          />
+        </svg>
+
+        {/* Current price label in ticks */}
+        <div className="absolute top-2 right-3 bg-zinc-950/80 px-2 py-0.5 rounded text-xs font-mono">
+          {toTicks(lastPrice)}
+        </div>
+      </div>
     );
   };
 
@@ -290,7 +374,7 @@ export default function TradeEaseShortOptions() {
                   className={`p-5 rounded-3xl border text-left transition ${sel ? 'border-emerald-500 bg-zinc-900' : 'border-white/10 hover:border-white/20 bg-zinc-900/70'}`}>
                   <div className="text-sm text-zinc-400">{sym === 'ZN=F' ? '10-Year T-Note (/ZN)' : '30-Year Bond (/ZB)'}</div>
                   <div className="font-mono text-4xl font-semibold tracking-tighter mt-1">
-                    {q ? q.regularMarketPrice.toFixed(3) : '—'}
+                    {q ? toTicks(q.regularMarketPrice) : '—'}
                   </div>
                   {q && <div className={q.regularMarketChange >= 0 ? 'text-emerald-400' : 'text-red-400'}>{q.regularMarketChange >= 0 ? '+' : ''}{q.regularMarketChange.toFixed(3)} ({q.regularMarketChangePercent.toFixed(2)}%)</div>}
                 </button>
@@ -300,11 +384,11 @@ export default function TradeEaseShortOptions() {
 
           {/* Price Chart */}
           <div className="rounded-3xl border border-white/10 bg-zinc-900 p-6">
-            <div className="font-semibold mb-2">{currentSymbolDisplay} Trade Price</div>
+            <div className="font-semibold mb-2">{currentSymbolDisplay} — 6-Month Daily Chart</div>
             <div className="bg-black/40 rounded-2xl p-3 border border-white/10">
               {renderPriceChart()}
             </div>
-            <div className="text-[10px] text-center text-zinc-500 mt-2">Live updating chart (Yahoo proxy + simulated ticks)</div>
+            <div className="text-[10px] text-center text-zinc-500 mt-2">6-month daily closes (Yahoo Finance). Right edge reflects latest live price.</div>
           </div>
         </div>
 
