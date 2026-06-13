@@ -122,9 +122,9 @@ export default function TradeEaseZBMonitor() {
   );
 
   // Open trades from uploaded CSV for monitoring
-  const [openCSVTrades, setOpenCSVTrades] = useState([]);
+  const [openCSVTrades, setOpenCSVTrades] = useState<any[]>([]);
 
-  const handleCSVUpload = (e) => {
+  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
