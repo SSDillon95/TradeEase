@@ -388,7 +388,7 @@ export default function TradeEaseZBMonitor() {
             ))}
           </div>
 
-          <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Select /ZB Contract (filtered to DTE >= {analyzerDTE})</div>
+          <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Select /ZB Contract (filtered to DTE {'>='} {analyzerDTE})</div>
           <div className="flex flex-wrap gap-3">
             {ZB_CONTRACTS.filter(c => c.approxDTE >= analyzerDTE).length > 0 ? (
               ZB_CONTRACTS.filter(c => c.approxDTE >= analyzerDTE).map((contract) => (
@@ -406,7 +406,7 @@ export default function TradeEaseZBMonitor() {
                 </button>
               ))
             ) : (
-              <div className="text-red-400 text-sm">No contracts available with DTE >= {analyzerDTE}. Choose a shorter DTE.</div>
+              <div className="text-red-400 text-sm">No contracts available with DTE {'>='} {analyzerDTE}. Choose a shorter DTE.</div>
             )}
           </div>
         </div>
