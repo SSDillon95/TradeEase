@@ -351,9 +351,37 @@ export default function TradeEaseZBMonitor() {
       <header className="border-b border-white/10 bg-zinc-950/95 backdrop-blur sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-2xl bg-emerald-500 flex items-center justify-center">
-              <span className="text-black font-bold text-2xl tracking-[-2.5px]">TE</span>
-            </div>
+            <svg width="36" height="36" viewBox="0 0 36 36" className="flex-shrink-0" aria-label="TradeEase logo">
+              <rect width="36" height="36" rx="8" fill="#0a0a0a" stroke="#22c55e" strokeWidth="1.5" />
+              {/* Short strangle payoff diagram — the flat high area in the center is the "easy money" credit zone 
+                 between the two short strikes. The wings show the risk tails. 
+                 Instantly recognizable to any options trader who sells premium. */}
+              <path 
+                d="M5 28 L9 11 L14 11 L22 11 L27 11 L31 28" 
+                fill="none" 
+                stroke="#22c55e" 
+                strokeWidth="3" 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+              />
+              {/* Max profit zone highlight (the flat credit collection area) */}
+              <rect x="9" y="8" width="18" height="5" fill="#22c55e" opacity="0.18" rx="1" />
+              {/* The two short strikes (the legs of the strangle) */}
+              <circle cx="9" cy="11" r="2.2" fill="#eab308" />
+              <circle cx="27" cy="11" r="2.2" fill="#eab308" />
+              <text 
+                x="18" 
+                y="32" 
+                fontSize="9" 
+                fontWeight="700" 
+                fill="#f1f5f9" 
+                textAnchor="middle" 
+                fontFamily="monospace"
+                letterSpacing="-0.5"
+              >
+                TE
+              </text>
+            </svg>
             <div>
               <div className="font-semibold text-2xl tracking-tighter">TradeEase</div>
               <div className="text-[10px] text-emerald-400 -mt-1">/ZB FUTURES CONTRACT MONITOR</div>
