@@ -121,6 +121,42 @@ export default function TradeEaseZBMonitor() {
     currentChange > 0.1 ? 'bullish' : currentChange < -0.1 ? 'bearish' : 'neutral'
   );
 
+  // Open trades from uploaded CSV for monitoring
+  const [openCSVTrades, setOpenCSVTrades] = useState([]);
+
+  const handleCSVUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target.result;
+      const lines = text.trim().split(/\r?\n/);
+      if (lines.length < 2) return;
+      const trades = [];
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        let parts;
+        if (line.includes('\t')) {
+          parts = line.split('\t');
+        } else {
+          parts = line.match(/(".*?"|[^,]+)(?=\s*,|\s*$)/g) || [];
+        }
+        if (parts.length < 9) continue;
+        const symbol = parts[0].replace(/"/g, '').trim();
+        const status = parts[1].replace(/"/g, '').trim();
+        const price = parts[3].replace(/"/g, '').trim();
+        let description = parts[8] ? parts[8].replace(/^"|"$/g, '').trim() : '';
+        description = description.replace(/\s+/g, ' ');
+        if (status === 'Filled' && description.includes('STO')) {
+          trades.push({ symbol, price, description });
+        }
+      }
+      setOpenCSVTrades(trades);
+    };
+    reader.readAsText(file);
+  };
+
   // Fetch live quote for the selected contract
   const fetchQuote = async (symbol: string) => {
     setIsLoadingQuote(true);
@@ -401,6 +437,43 @@ export default function TradeEaseZBMonitor() {
           </p>
         </div>
 
+        {/* CSV Upload for Open Trades - indicated for monitoring */}
+        <div className="mb-8">
+          <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Upload Open Trades CSV</div>
+          <input
+            type="file"
+            accept=".csv,.txt"
+            onChange={handleCSVUpload}
+            className="block w-full text-sm text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-emerald-500 file:text-black hover:file:bg-emerald-600"
+          />
+          <div className="text-xs text-zinc-500 mt-1">Upload your platform export (tab or comma separated). Open STO trades will be listed below and their contracts will have a "CSV Open" badge in the selector. Click "Monitor" to select the contract.</div>
+
+          {openCSVTrades.length > 0 && (
+            <div className="mt-4">
+              <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Open Trades from CSV (for monitoring)</div>
+              <div className="space-y-2">
+                {openCSVTrades.map((trade, index) => {
+                  const matchContract = ZB_CONTRACTS.find(c => matchesContract(trade.symbol, c.symbol));
+                  return (
+                    <div key={index} className="flex justify-between items-center bg-zinc-900 p-3 rounded-2xl border border-white/10 text-sm">
+                      <div className="font-mono flex-1 truncate mr-2">{trade.description}</div>
+                      <div className="text-emerald-400 mr-4">{trade.price}</div>
+                      {matchContract && (
+                        <button
+                          onClick={() => setSelectedContract(matchContract)}
+                          className="px-3 py-1 text-xs bg-emerald-500 text-black rounded-xl hover:bg-emerald-600"
+                        >
+                          Monitor
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* DTE Filter + Contract Selector */}
         <div className="mb-8">
           <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Select DTE (only contracts with sufficient time to expiration are shown)</div>
@@ -431,12 +504,52 @@ export default function TradeEaseZBMonitor() {
                 >
                   <div className="font-mono text-lg font-semibold">{contract.symbol}</div>
                   <div className="text-sm text-zinc-400">{contract.label} (~{contract.approxDTE} DTE)</div>
+                  {openCSVTrades.some(t => matchesContract(t.symbol, contract.symbol)) && (
+                    <span className="ml-2 text-[10px] bg-emerald-600 px-1 rounded text-black">CSV Open</span>
+                  )}
                 </button>
               ))
             ) : (
               <div className="text-red-400 text-sm">No contracts available with DTE {'>='} {analyzerDTE}. Choose a shorter DTE.</div>
             )}
           </div>
+        </div>
+
+        {/* CSV Upload for Open Trades - indicated for monitoring */}
+        <div className="mb-8">
+          <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Upload Open Trades CSV</div>
+          <input
+            type="file"
+            accept=".csv,.txt"
+            onChange={handleCSVUpload}
+            className="block w-full text-sm text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-emerald-500 file:text-black hover:file:bg-emerald-600"
+          />
+          <div className="text-xs text-zinc-500 mt-1">Upload your platform export (tab or comma separated). Open STO trades will be listed below and their contracts will have a "CSV Open" badge in the selector. Click "Monitor" to select the contract.</div>
+
+          {openCSVTrades.length > 0 && (
+            <div className="mt-4">
+              <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Open Trades from CSV (for monitoring)</div>
+              <div className="space-y-2">
+                {openCSVTrades.map((trade, index) => {
+                  const matchContract = ZB_CONTRACTS.find(c => matchesContract(trade.symbol, c.symbol));
+                  return (
+                    <div key={index} className="flex justify-between items-center bg-zinc-900 p-3 rounded-2xl border border-white/10 text-sm">
+                      <div className="font-mono flex-1 truncate mr-2">{trade.description}</div>
+                      <div className="text-emerald-400 mr-4">{trade.price}</div>
+                      {matchContract && (
+                        <button
+                          onClick={() => setSelectedContract(matchContract)}
+                          className="px-3 py-1 text-xs bg-emerald-500 text-black rounded-xl hover:bg-emerald-600"
+                        >
+                          Monitor
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Current Contract Monitor */}
