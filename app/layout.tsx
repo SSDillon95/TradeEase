@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "TradeEase | Short Options Terminal",
-  description: "Professional interface for trading short options. Connected to Tastytrade API via GitHub + Vercel.",
+  description: "Short options trading interface for Treasury futures (/ZB and /ZN) with live market data.",
   icons: {
     icon: "/vercel.svg",
   },
