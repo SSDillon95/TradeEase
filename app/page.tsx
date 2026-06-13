@@ -124,6 +124,17 @@ export default function TradeEaseZBMonitor() {
   // Open trades from uploaded CSV for monitoring
   const [openCSVTrades, setOpenCSVTrades] = useState<any[]>([]);
 
+  const matchesContract = (tradeSym: string, contractSym: string) => {
+    if (!tradeSym || !contractSym) return false;
+    const t = tradeSym.toUpperCase();
+    const c = contractSym.toUpperCase();
+    if (t.includes('ZBU')) return c.includes('ZBU');
+    if (t.includes('ZBZ')) return c.includes('ZBZ');
+    if (t.includes('ZNU')) return c.includes('ZNU');
+    if (t.includes('ZB')) return c.includes('ZB');
+    return false;
+  };
+
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
