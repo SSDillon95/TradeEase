@@ -230,8 +230,6 @@ export default function TradeEaseShortOptions() {
 
   const currentSymbolDisplay = selectedUnderlying === 'ZN=F' ? '/ZN (10Y)' : '/ZB (30Y)';
 
-  const chain = generateChain(currentPrice);
-
   const selectStrike = (strike: number) => {
     if (selectedStrategy === 'short_put' || selectedStrategy === 'short_call') {
       setShortStrike(strike);
