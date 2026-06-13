@@ -569,7 +569,7 @@ export default function TradeEaseZBMonitor() {
                             <td className="p-2 font-mono text-emerald-400">{row.putCredit}</td>
                             <td className="p-2 font-mono">{row.callStrike}</td>
                             <td className="p-2 font-mono text-emerald-400">{row.callCredit}</td>
-                            <td className="p-2 font-mono text-emerald-400">{row.icCredit}</td>
+                            <td className="p-2 font-mono text-emerald-400">{row.totalCredit}</td>
                             <td className="p-2">{row.pop}</td>
                           </tr>
                         ))}
