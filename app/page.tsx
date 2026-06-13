@@ -143,7 +143,11 @@ export default function TradeEaseZBMonitor() {
       const text = typeof ev.target?.result === 'string' ? ev.target.result : '';
       const lines = text.trim().split(/\r?\n/);
       if (lines.length < 2) return;
-      const trades = [];
+
+      // Net positions per leg to determine open ones (ignore closed by BTC)
+      const net = {};
+      const stoRows = [];
+
       for (let i = 1; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
@@ -154,16 +158,45 @@ export default function TradeEaseZBMonitor() {
           parts = line.match(/(".*?"|[^,]+)(?=\s*,|\s*$)/g) || [];
         }
         if (parts.length < 9) continue;
+
         const symbol = parts[0].replace(/"/g, '').trim();
         const status = parts[1].replace(/"/g, '').trim();
         const price = parts[3].replace(/"/g, '').trim();
         let description = parts[8] ? parts[8].replace(/^"|"$/g, '').trim() : '';
         description = description.replace(/\s+/g, ' ');
-        if (status === 'Filled' && description.includes('STO')) {
-          trades.push({ symbol, price, description });
+
+        if (status !== 'Filled') continue;
+
+        // Only consider /ZB related for now (as per user's focus)
+        if (!symbol.toUpperCase().includes('ZB')) continue;
+
+        // Extract legs from description (handles multi-leg strangles and multi-line)
+        const legRegex = /(-?\d+)\s+([A-Za-z]{3}\s+\d{2})\s+(\d+d)\s+([\d.]+)\s+(Put|Call)\s+(STO|BTC)/g;
+        let match;
+        const legsInRow = [];
+        while ((match = legRegex.exec(description)) !== null) {
+          const signedQty = parseInt(match[1]);
+          const exp = match[2]; // e.g. "Sep 25"
+          const dteStr = match[3];
+          const strike = match[4];
+          const side = match[5];
+          const action = match[6];
+          const legKey = `${exp} ${dteStr} ${strike} ${side}`;
+          legsInRow.push(legKey);
+          net[legKey] = (net[legKey] || 0) + signedQty;
+        }
+
+        if (description.includes('STO') && legsInRow.length > 0) {
+          stoRows.push({ symbol, price, description, legsInRow });
         }
       }
-      setOpenCSVTrades(trades);
+
+      // Only keep STO rows where at least one leg is still net short (open)
+      const openTrades = stoRows.filter(row => {
+        return row.legsInRow.some(key => (net[key] || 0) < 0);
+      });
+
+      setOpenCSVTrades(openTrades);
     };
     reader.readAsText(file);
   };
@@ -448,7 +481,7 @@ export default function TradeEaseZBMonitor() {
           </p>
         </div>
 
-        {/* CSV Upload for Open Trades - indicated for monitoring */}
+        {/* CSV Upload for Open Trades - indicated for monitoring (one upload only) */}
         <div className="mb-8">
           <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Upload Open Trades CSV</div>
           <input
@@ -457,29 +490,44 @@ export default function TradeEaseZBMonitor() {
             onChange={handleCSVUpload}
             className="block w-full text-sm text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-emerald-500 file:text-black hover:file:bg-emerald-600"
           />
-          <div className="text-xs text-zinc-500 mt-1">Upload your platform export (tab or comma separated). Open STO trades will be listed below and their contracts will have a "CSV Open" badge in the selector. Click "Monitor" to select the contract.</div>
+          <div className="text-xs text-zinc-500 mt-1">Upload your platform export. Open STO trades (net of any BTC closes) will appear below with "CSV Open" badges on matching contracts. Use the Monitor button to jump to the contract in the main view.</div>
 
           {openCSVTrades.length > 0 && (
             <div className="mt-4">
               <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Open Trades from CSV (for monitoring)</div>
-              <div className="space-y-2">
-                {openCSVTrades.map((trade, index) => {
-                  const matchContract = ZB_CONTRACTS.find(c => matchesContract(trade.symbol, c.symbol));
-                  return (
-                    <div key={index} className="flex justify-between items-center bg-zinc-900 p-3 rounded-2xl border border-white/10 text-sm">
-                      <div className="font-mono flex-1 truncate mr-2">{trade.description}</div>
-                      <div className="text-emerald-400 mr-4">{trade.price}</div>
-                      {matchContract && (
-                        <button
-                          onClick={() => setSelectedContract(matchContract)}
-                          className="px-3 py-1 text-xs bg-emerald-500 text-black rounded-xl hover:bg-emerald-600"
-                        >
-                          Monitor
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border border-white/10 rounded-xl overflow-hidden">
+                  <thead className="bg-zinc-800 text-xs text-zinc-400">
+                    <tr>
+                      <th className="p-2 text-left">Symbol</th>
+                      <th className="p-2 text-left">Description (Open Leg)</th>
+                      <th className="p-2">Entry Credit</th>
+                      <th className="p-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {openCSVTrades.map((trade, index) => {
+                      const matchContract = ZB_CONTRACTS.find(c => matchesContract(trade.symbol, c.symbol));
+                      return (
+                        <tr key={index} className="border-t border-white/10 hover:bg-zinc-950">
+                          <td className="p-2 font-mono">{trade.symbol}</td>
+                          <td className="p-2 font-mono text-xs truncate max-w-xs">{trade.description}</td>
+                          <td className="p-2 font-mono text-emerald-400 text-right">{trade.price}</td>
+                          <td className="p-2 text-right">
+                            {matchContract && (
+                              <button
+                                onClick={() => setSelectedContract(matchContract)}
+                                className="px-3 py-1 text-xs bg-emerald-500 text-black rounded-xl hover:bg-emerald-600"
+                              >
+                                Monitor
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -526,42 +574,7 @@ export default function TradeEaseZBMonitor() {
           </div>
         </div>
 
-        {/* CSV Upload for Open Trades - indicated for monitoring */}
-        <div className="mb-8">
-          <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Upload Open Trades CSV</div>
-          <input
-            type="file"
-            accept=".csv,.txt"
-            onChange={handleCSVUpload}
-            className="block w-full text-sm text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-emerald-500 file:text-black hover:file:bg-emerald-600"
-          />
-          <div className="text-xs text-zinc-500 mt-1">Upload your platform export (tab or comma separated). Open STO trades will be listed below and their contracts will have a "CSV Open" badge in the selector. Click "Monitor" to select the contract.</div>
 
-          {openCSVTrades.length > 0 && (
-            <div className="mt-4">
-              <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Open Trades from CSV (for monitoring)</div>
-              <div className="space-y-2">
-                {openCSVTrades.map((trade, index) => {
-                  const matchContract = ZB_CONTRACTS.find(c => matchesContract(trade.symbol, c.symbol));
-                  return (
-                    <div key={index} className="flex justify-between items-center bg-zinc-900 p-3 rounded-2xl border border-white/10 text-sm">
-                      <div className="font-mono flex-1 truncate mr-2">{trade.description}</div>
-                      <div className="text-emerald-400 mr-4">{trade.price}</div>
-                      {matchContract && (
-                        <button
-                          onClick={() => setSelectedContract(matchContract)}
-                          className="px-3 py-1 text-xs bg-emerald-500 text-black rounded-xl hover:bg-emerald-600"
-                        >
-                          Monitor
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
 
         {/* Current Contract Monitor */}
         <div className="rounded-3xl border border-white/10 bg-zinc-900 p-8 mb-8">
