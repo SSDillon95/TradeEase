@@ -21,6 +21,13 @@ interface HistoricalPoint {
   close: number;
 }
 
+interface OpenTrade {
+  symbol: string;
+  price: string;
+  description: string;
+  legsInRow: string[];
+}
+
 // /ZB (30-Year Treasury Bond Futures) contracts
 // Format: ZB + MonthCode + LastTwoDigitsOfYear + .F
 // approxDTE: estimated days to expiration (as of mid-2026 for demo)
@@ -122,7 +129,7 @@ export default function TradeEaseZBMonitor() {
   );
 
   // Open trades from uploaded CSV for monitoring
-  const [openCSVTrades, setOpenCSVTrades] = useState<any[]>([]);
+  const [openCSVTrades, setOpenCSVTrades] = useState<OpenTrade[]>([]);
 
   const matchesContract = (tradeSym: string, contractSym: string) => {
     if (!tradeSym || !contractSym) return false;
@@ -145,13 +152,13 @@ export default function TradeEaseZBMonitor() {
       if (lines.length < 2) return;
 
       // Net positions per leg to determine open ones (ignore closed by BTC)
-      const net = {};
-      const stoRows = [];
+      const net: Record<string, number> = {};
+      const stoRows: OpenTrade[] = [];
 
       for (let i = 1; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
-        let parts;
+        let parts: string[] = [];
         if (line.includes('\t')) {
           parts = line.split('\t');
         } else {
@@ -172,8 +179,8 @@ export default function TradeEaseZBMonitor() {
 
         // Extract legs from description (handles multi-leg strangles and multi-line)
         const legRegex = /(-?\d+)\s+([A-Za-z]{3}\s+\d{2})\s+(\d+d)\s+([\d.]+)\s+(Put|Call)\s+(STO|BTC)/g;
-        let match;
-        const legsInRow = [];
+        let match: RegExpExecArray | null = null;
+        const legsInRow: string[] = [];
         while ((match = legRegex.exec(description)) !== null) {
           const signedQty = parseInt(match[1]);
           const exp = match[2]; // e.g. "Sep 25"
@@ -303,7 +310,7 @@ export default function TradeEaseZBMonitor() {
     });
 
     // Y ticks (approx 5 levels in ticks format)
-    const yTicks = [];
+    const yTicks: { val: number; y: number }[] = [];
     for (let i = 0; i <= 4; i++) {
       const val = minLow + (i * range) / 4;
       const y = padY + ((maxHigh - val) / range) * (h - padY * 2);
@@ -685,7 +692,7 @@ export default function TradeEaseZBMonitor() {
               <label className="text-xs text-zinc-400 block mb-1">Bias (auto from price move)</label>
               <select
                 value={analyzerBias}
-                onChange={(e) => setAnalyzerBias(e.target.value as any)}
+                onChange={(e) => setAnalyzerBias(e.target.value as 'bullish' | 'neutral' | 'bearish')}
                 className="bg-zinc-950 border border-white/10 w-full rounded-2xl px-4 py-2"
               >
                 <option value="bullish">Bullish (price up)</option>
