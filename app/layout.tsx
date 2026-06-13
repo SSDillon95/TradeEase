@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "My Web App",
-  description: "A modern web app built with Next.js. Connected to GitHub with free hosting on Vercel.",
+  title: "TradeEase | Short Options Terminal",
+  description: "Professional interface for trading short options. Connected to Tastytrade API via GitHub + Vercel.",
   icons: {
     icon: "/vercel.svg",
   },
@@ -30,7 +30,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col bg-zinc-950 text-white">{children}</body>
     </html>
   );
 }
