@@ -52,6 +52,8 @@ export default function TradeEaseZBMonitor() {
 
   // Current price for display (from live or history)
   const currentPrice = quote?.regularMarketPrice ?? (historical.length > 0 ? historical[historical.length - 1].close : 121.5);
+  const currentChange = quote?.regularMarketChange || 0;
+  const currentChangePct = quote?.regularMarketChangePercent || 0;
 
   // Fetch live quote for the selected contract
   const fetchQuote = async (symbol: string) => {
