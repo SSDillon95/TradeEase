@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# My Web App
 
-## Getting Started
+A modern, production-ready web app built with Next.js 16.
 
-First, run the development server:
+**Stack:** Next.js (App Router) • TypeScript • Tailwind CSS • ESLint • React 19
+
+**Connected to:** GitHub (version control + CI)  
+**Free hosting:** Vercel (recommended) or Netlify — zero-config GitHub deploys
+
+## Quick start (local development)
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Edit `app/page.tsx` (or any file in `app/`) — changes hot reload instantly.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Key features of this starter
 
-## Learn More
+- Clean, responsive UI with dark mode support
+- Interactive React demo (client component with useState)
+- Ready for API routes, Server Actions, databases, auth, etc.
+- Professional layout + metadata
 
-To learn more about Next.js, take a look at the following resources:
+## GitHub + Free Hosting workflow (what you asked for)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Code lives here in this repo on GitHub.
+2. Push to `main` (or any branch).
+3. Connect the GitHub repo to Vercel (or Netlify):
+   - Go to https://vercel.com/new
+   - Sign in with GitHub
+   - Import this repository
+   - Deploy (takes ~30 seconds first time)
+4. Every future push = new production deploy + preview URLs for branches.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Alternative hosts with great GitHub integration:
+- Netlify (https://app.netlify.com/start)
+- Render, Railway, etc. for backend-heavy needs
 
-## Deploy on Vercel
+## Useful scripts
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Command         | Description                  |
+|-----------------|------------------------------|
+| `npm run dev`   | Start local dev server       |
+| `npm run build` | Production build             |
+| `npm run start` | Run the production build     |
+| `npm run lint`  | Run ESLint                   |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Next ideas to build on this
+
+- Add authentication (NextAuth, Clerk, Supabase Auth)
+- Connect a database (Vercel Postgres, Supabase, PlanetScale)
+- Add API routes in `app/api/`
+- Deploy previews via Vercel + GitHub PRs (built-in)
+
+Created with `create-next-app`, then customized + wired for GitHub + free hosting.
