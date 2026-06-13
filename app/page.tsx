@@ -23,12 +23,13 @@ interface HistoricalPoint {
 
 // /ZB (30-Year Treasury Bond Futures) contracts
 // Format: ZB + MonthCode + LastTwoDigitsOfYear + .F
+// approxDTE: estimated days to expiration (as of mid-2026 for demo)
 const ZB_CONTRACTS = [
-  { symbol: 'ZBH26.F', label: 'Mar 2026 (H26)' },
-  { symbol: 'ZBM26.F', label: 'Jun 2026 (M26)' },
-  { symbol: 'ZBU26.F', label: 'Sep 2026 (U26)' },
-  { symbol: 'ZBZ26.F', label: 'Dec 2026 (Z26)' },
-  { symbol: 'ZBH27.F', label: 'Mar 2027 (H27)' },
+  { symbol: 'ZBH26.F', label: 'Mar 2026 (H26)', approxDTE: 280 },
+  { symbol: 'ZBM26.F', label: 'Jun 2026 (M26)', approxDTE: 190 },
+  { symbol: 'ZBU26.F', label: 'Sep 2026 (U26)', approxDTE: 100 },
+  { symbol: 'ZBZ26.F', label: 'Dec 2026 (Z26)', approxDTE: 10 },
+  { symbol: 'ZBH27.F', label: 'Mar 2027 (H27)', approxDTE: 280 },
 ];
 
 function toTicks(price: number): string {
@@ -38,57 +39,42 @@ function toTicks(price: number): string {
   return `${whole}'${thirtySeconds.toString().padStart(2, '0')}'`;
 }
 
-// Simple estimator for far OTM premium (demo only)
+// Simple estimator for far OTM premium (demo only, based on distance and DTE)
 function estimatePremium(distance: number, dte: number, volFactor: number = 0.015): number {
+  // Rough approximation for bond futures far OTM options premium
   return Math.max(0.02, distance * volFactor * Math.sqrt(dte / 365) * 0.8);
 }
 
+// Strangle only recommendation (sell far OTM put + sell far OTM call)
+// Best yield = total credit; safest risk = high POP from 90 OTM long DTE (undefined risk but low prob of large adverse move)
 function getRecommendations(price: number, dte: number, otm: number, bias: string) {
   const distance = price * ((100 - otm) / 100);
-  const shortPutCredit = estimatePremium(distance, dte);
-  const shortCallCredit = estimatePremium(distance, dte);
-  const spreadWidth = 1.0;
-  const putSpreadCredit = Math.max(0.01, shortPutCredit - estimatePremium(distance + spreadWidth, dte) * 0.6);
-  const callSpreadCredit = Math.max(0.01, shortCallCredit - estimatePremium(distance + spreadWidth, dte) * 0.6);
-  const icCredit = Math.max(0.03, putSpreadCredit + callSpreadCredit * 0.9);
+  const putCredit = estimatePremium(distance, dte);
+  const callCredit = estimatePremium(distance, dte);
+  const totalCredit = putCredit + callCredit;
 
-  let rec = '';
-  let why = '';
-  let bestCredit = 0;
-  let bestStrat = '';
-
+  let rec = 'Short Strangle (sell far OTM put + sell far OTM call)';
+  let why = `Neutral bias. Far OTM ${otm}% on both sides for ${dte}DTE gives best yield (total credit) with safest risk profile for your style (high POP ~80%+ due to distance).`;
   if (bias === 'bullish') {
-    rec = 'Bull Put Credit Spread (or naked Short Put if risk-defined)';
-    bestCredit = putSpreadCredit;
-    bestStrat = 'Bull Put Credit Spread';
-    why = `Price rising (${toTicks(price)}), bullish on bonds. Far OTM ${otm}% put side for ${dte}DTE has high POP.`;
+    why = `Price rising (${toTicks(price)}). Still recommend balanced strangle but put side contributes more to yield.`;
   } else if (bias === 'bearish') {
-    rec = 'Bear Call Credit Spread (or naked Short Call)';
-    bestCredit = callSpreadCredit;
-    bestStrat = 'Bear Call Credit Spread';
-    why = `Price falling. Sell calls far OTM.`;
-  } else {
-    rec = 'Short Iron Condor (put + call credit spreads)';
-    bestCredit = icCredit;
-    bestStrat = 'Short Iron Condor';
-    why = `Neutral bias. Far OTM on both sides maximizes premium with defined risk for 60-100DTE.`;
+    why = `Price falling. Still recommend balanced strangle but call side contributes more to yield.`;
   }
 
-  const maxProfit = bestCredit;
-  const maxLoss = spreadWidth - bestCredit;
-  const pop = bias === 'neutral' ? 82 : 78;
+  const maxProfit = totalCredit;
+  const maxLoss = 'Undefined (naked strangle) — but very low probability of loss due to 90 OTM';
+  const pop = 82;
 
   return {
     rec,
     why,
-    bestStrat,
-    bestCredit: bestCredit.toFixed(2),
+    bestStrat: 'Short Strangle',
+    bestCredit: totalCredit.toFixed(2),
     maxProfit: maxProfit.toFixed(2),
-    maxLoss: maxLoss.toFixed(2),
+    maxLoss,
     pop: `${pop}%`,
-    putCredit: shortPutCredit.toFixed(2),
-    callCredit: shortCallCredit.toFixed(2),
-    icCredit: icCredit.toFixed(2),
+    putCredit: putCredit.toFixed(2),
+    callCredit: callCredit.toFixed(2),
   };
 }
 
@@ -98,19 +84,15 @@ function getScannerData(price: number, otm: number) {
     const dist = price * ((100 - otm) / 100);
     const putPrem = estimatePremium(dist, dte);
     const callPrem = estimatePremium(dist, dte);
-    const putSpread = Math.max(0.01, putPrem - estimatePremium(dist + 1, dte) * 0.55);
-    const callSpread = Math.max(0.01, callPrem - estimatePremium(dist + 1, dte) * 0.55);
-    const ic = Math.max(0.02, putSpread + callSpread * 0.85);
+    const totalCredit = putPrem + callPrem;
     return {
       dte,
       putStrike: (price - dist).toFixed(2),
       callStrike: (price + dist).toFixed(2),
       putCredit: putPrem.toFixed(2),
       callCredit: callPrem.toFixed(2),
-      putSpreadCredit: putSpread.toFixed(2),
-      callSpreadCredit: callSpread.toFixed(2),
-      icCredit: ic.toFixed(2),
-      pop: dte >= 80 ? '85%' : '80%',
+      totalCredit: totalCredit.toFixed(2),
+      pop: '82%',
     };
   });
 }
@@ -391,24 +373,41 @@ export default function TradeEaseZBMonitor() {
           </p>
         </div>
 
-        {/* Contract Selector */}
+        {/* DTE Filter + Contract Selector */}
         <div className="mb-8">
-          <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Select Contract</div>
-          <div className="flex flex-wrap gap-3">
-            {ZB_CONTRACTS.map((contract) => (
+          <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Select DTE (only contracts with sufficient time to expiration are shown)</div>
+          <div className="flex gap-3 mb-4">
+            {[60,80,100].map(d => (
               <button
-                key={contract.symbol}
-                onClick={() => setSelectedContract(contract)}
-                className={`px-5 py-3 rounded-2xl border text-left transition min-w-[160px] ${
-                  selectedContract.symbol === contract.symbol
-                    ? 'border-emerald-500 bg-zinc-900'
-                    : 'border-white/10 hover:bg-zinc-900'
-                }`}
+                key={d}
+                onClick={() => setAnalyzerDTE(d)}
+                className={`px-4 py-2 rounded-2xl border text-sm transition ${analyzerDTE === d ? 'border-emerald-500 bg-zinc-900' : 'border-white/10 hover:bg-zinc-900'}`}
               >
-                <div className="font-mono text-lg font-semibold">{contract.symbol}</div>
-                <div className="text-sm text-zinc-400">{contract.label}</div>
+                {d} DTE
               </button>
             ))}
+          </div>
+
+          <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Select /ZB Contract (filtered to DTE >= {analyzerDTE})</div>
+          <div className="flex flex-wrap gap-3">
+            {ZB_CONTRACTS.filter(c => c.approxDTE >= analyzerDTE).length > 0 ? (
+              ZB_CONTRACTS.filter(c => c.approxDTE >= analyzerDTE).map((contract) => (
+                <button
+                  key={contract.symbol}
+                  onClick={() => setSelectedContract(contract)}
+                  className={`px-5 py-3 rounded-2xl border text-left transition min-w-[160px] ${
+                    selectedContract.symbol === contract.symbol
+                      ? 'border-emerald-500 bg-zinc-900'
+                      : 'border-white/10 hover:bg-zinc-900'
+                  }`}
+                >
+                  <div className="font-mono text-lg font-semibold">{contract.symbol}</div>
+                  <div className="text-sm text-zinc-400">{contract.label} (~{contract.approxDTE} DTE)</div>
+                </button>
+              ))
+            ) : (
+              <div className="text-red-400 text-sm">No contracts available with DTE >= {analyzerDTE}. Choose a shorter DTE.</div>
+            )}
           </div>
         </div>
 
@@ -491,7 +490,7 @@ export default function TradeEaseZBMonitor() {
         <div className="rounded-3xl border border-white/10 bg-zinc-900 p-6">
           <div className="font-semibold text-xl mb-4">Strategy Analyzer & Recommendations</div>
           <p className="text-sm text-zinc-400 mb-4">
-            Your style: 60/80/100 DTE, far OTM (90 OTM / ~10-15 delta), short premium on /ZB. 
+            Short Strangle only (90 OTM). Best yield (total credit) and safest risk (high POP) for your style. Contracts with approxDTE &lt; selected DTE are hidden. 
             Estimates are demo-only (based on distance + DTE). Not financial advice.
           </p>
 
@@ -558,7 +557,7 @@ export default function TradeEaseZBMonitor() {
                           <th className="p-2">Put Credit</th>
                           <th className="p-2">Call Strike</th>
                           <th className="p-2">Call Credit</th>
-                          <th className="p-2">IC Credit (both sides)</th>
+                          <th className="p-2">Total Strangle Credit (yield)</th>
                           <th className="p-2">Est. POP</th>
                         </tr>
                       </thead>
@@ -578,7 +577,7 @@ export default function TradeEaseZBMonitor() {
                     </table>
                   </div>
                   <div className="text-xs text-zinc-500 mt-2">
-                    Credits are demo estimates. For 90 OTM long DTE, ICs and credit spreads typically offer the best risk/reward for premium sellers in neutral-to-mildly directional markets.
+                    Credits are demo estimates. For 90 OTM long DTE, the strangle offers the best yield (total credit) with the safest risk profile (highest POP) for your far OTM style.
                   </div>
                 </div>
               </div>
