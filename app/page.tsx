@@ -125,11 +125,11 @@ export default function TradeEaseZBMonitor() {
   const [openCSVTrades, setOpenCSVTrades] = useState<any[]>([]);
 
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const text = ev.target.result;
+      const text = typeof ev.target?.result === 'string' ? ev.target.result : '';
       const lines = text.trim().split(/\r?\n/);
       if (lines.length < 2) return;
       const trades = [];
