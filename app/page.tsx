@@ -38,6 +38,162 @@ function toTicks(price: number): string {
   return `${whole}'${thirtySeconds.toString().padStart(2, '0')}'`;
 }
 
+// Simple estimator for far OTM premium (demo only)
+function estimatePremium(distance: number, dte: number, volFactor: number = 0.015): number {
+  return Math.max(0.02, distance * volFactor * Math.sqrt(dte / 365) * 0.8);
+}
+
+function getRecommendations(price: number, dte: number, otm: number, bias: string) {
+  const distance = price * ((100 - otm) / 100);
+  const shortPutCredit = estimatePremium(distance, dte);
+  const shortCallCredit = estimatePremium(distance, dte);
+  const spreadWidth = 1.0;
+  const putSpreadCredit = Math.max(0.01, shortPutCredit - estimatePremium(distance + spreadWidth, dte) * 0.6);
+  const callSpreadCredit = Math.max(0.01, shortCallCredit - estimatePremium(distance + spreadWidth, dte) * 0.6);
+  const icCredit = Math.max(0.03, putSpreadCredit + callSpreadCredit * 0.9);
+
+  let rec = '';
+  let why = '';
+  let bestCredit = 0;
+  let bestStrat = '';
+
+  if (bias === 'bullish') {
+    rec = 'Bull Put Credit Spread (or naked Short Put if risk-defined)';
+    bestCredit = putSpreadCredit;
+    bestStrat = 'Bull Put Credit Spread';
+    why = `Price rising (${toTicks(price)}), bullish on bonds. Far OTM ${otm}% put side for ${dte}DTE has high POP.`;
+  } else if (bias === 'bearish') {
+    rec = 'Bear Call Credit Spread (or naked Short Call)';
+    bestCredit = callSpreadCredit;
+    bestStrat = 'Bear Call Credit Spread';
+    why = `Price falling. Sell calls far OTM.`;
+  } else {
+    rec = 'Short Iron Condor (put + call credit spreads)';
+    bestCredit = icCredit;
+    bestStrat = 'Short Iron Condor';
+    why = `Neutral bias. Far OTM on both sides maximizes premium with defined risk for 60-100DTE.`;
+  }
+
+  const maxProfit = bestCredit;
+  const maxLoss = spreadWidth - bestCredit;
+  const pop = bias === 'neutral' ? 82 : 78;
+
+  return {
+    rec,
+    why,
+    bestStrat,
+    bestCredit: bestCredit.toFixed(2),
+    maxProfit: maxProfit.toFixed(2),
+    maxLoss: maxLoss.toFixed(2),
+    pop: `${pop}%`,
+    putCredit: shortPutCredit.toFixed(2),
+    callCredit: shortCallCredit.toFixed(2),
+    icCredit: icCredit.toFixed(2),
+  };
+}
+
+function getScannerData(price: number, otm: number) {
+  const dtes = [60, 80, 100];
+  return dtes.map(dte => {
+    const dist = price * ((100 - otm) / 100);
+    const putPrem = estimatePremium(dist, dte);
+    const callPrem = estimatePremium(dist, dte);
+    const putSpread = Math.max(0.01, putPrem - estimatePremium(dist + 1, dte) * 0.55);
+    const callSpread = Math.max(0.01, callPrem - estimatePremium(dist + 1, dte) * 0.55);
+    const ic = Math.max(0.02, putSpread + callSpread * 0.85);
+    return {
+      dte,
+      putStrike: (price - dist).toFixed(2),
+      callStrike: (price + dist).toFixed(2),
+      putCredit: putPrem.toFixed(2),
+      callCredit: callPrem.toFixed(2),
+      putSpreadCredit: putSpread.toFixed(2),
+      callSpreadCredit: callSpread.toFixed(2),
+      icCredit: ic.toFixed(2),
+      pop: dte >= 80 ? '85%' : '80%',
+    };
+  });
+}
+
+// Simple estimator for far OTM premium (demo only, based on distance and DTE)
+function estimatePremium(distance: number, dte: number, volFactor: number = 0.015): number {
+  // Rough approximation for bond futures far OTM options premium
+  return Math.max(0.02, distance * volFactor * Math.sqrt(dte / 365) * 0.8);
+}
+
+function getRecommendations(price: number, dte: number, otm: number, bias: string) {
+  const distance = price * ((100 - otm) / 100);
+  const shortPutCredit = estimatePremium(distance, dte);
+  const shortCallCredit = estimatePremium(distance, dte);
+  const spreadWidth = 1.0; // 1 point wings for demo
+  const putSpreadCredit = Math.max(0.01, shortPutCredit - estimatePremium(distance + spreadWidth, dte) * 0.6);
+  const callSpreadCredit = Math.max(0.01, shortCallCredit - estimatePremium(distance + spreadWidth, dte) * 0.6);
+  const icCredit = Math.max(0.03, putSpreadCredit + callSpreadCredit * 0.9);
+
+  let rec = '';
+  let why = '';
+  let bestCredit = 0;
+  let bestStrat = '';
+
+  if (bias === 'bullish') {
+    rec = 'Bull Put Credit Spread (or naked Short Put if defined risk ok)';
+    bestCredit = putSpreadCredit;
+    bestStrat = 'Bull Put Credit Spread';
+    why = `Price rising (${toTicks(price)}), bullish on bonds (lower yields). Far OTM ${otm}% put side has high POP (~80-90%) for ${dte}DTE.`;
+  } else if (bias === 'bearish') {
+    rec = 'Bear Call Credit Spread (or naked Short Call)';
+    bestCredit = callSpreadCredit;
+    bestStrat = 'Bear Call Credit Spread';
+    why = `Price falling, bearish on bonds (higher yields expected). Sell calls far OTM.`;
+  } else {
+    rec = 'Short Iron Condor (balanced put + call credit spreads)';
+    bestCredit = icCredit;
+    bestStrat = 'Short Iron Condor';
+    why = `Neutral bias, range-bound likely. Far OTM 90% on both sides for 60-100DTE maximizes premium collection with defined risk.`;
+  }
+
+  // Compute metrics for best
+  const maxProfit = bestCredit;
+  const maxLoss = spreadWidth - bestCredit; // for spread; for IC similar or double
+  const pop = bias === 'neutral' ? 82 : 78; // demo POP %
+
+  return {
+    rec,
+    why,
+    bestStrat,
+    bestCredit: bestCredit.toFixed(2),
+    maxProfit: maxProfit.toFixed(2),
+    maxLoss: maxLoss.toFixed(2),
+    pop: `${pop}%`,
+    putCredit: shortPutCredit.toFixed(2),
+    callCredit: shortCallCredit.toFixed(2),
+    icCredit: icCredit.toFixed(2),
+  };
+}
+
+function getScannerData(price: number, otm: number) {
+  const dtes = [60, 80, 100];
+  return dtes.map(dte => {
+    const dist = price * ((100 - otm) / 100);
+    const putPrem = estimatePremium(dist, dte);
+    const callPrem = estimatePremium(dist, dte);
+    const putSpread = Math.max(0.01, putPrem - estimatePremium(dist + 1, dte) * 0.55);
+    const callSpread = Math.max(0.01, callPrem - estimatePremium(dist + 1, dte) * 0.55);
+    const ic = Math.max(0.02, putSpread + callSpread * 0.85);
+    return {
+      dte,
+      putStrike: (price - dist).toFixed(2),
+      callStrike: (price + dist).toFixed(2),
+      putCredit: putPrem.toFixed(2),
+      callCredit: callPrem.toFixed(2),
+      putSpreadCredit: putSpread.toFixed(2),
+      callSpreadCredit: callSpread.toFixed(2),
+      icCredit: ic.toFixed(2),
+      pop: dte >= 80 ? '85%' : '80%',
+    };
+  });
+}
+
 export default function TradeEaseZBMonitor() {
   // Selected contract
   const [selectedContract, setSelectedContract] = useState(ZB_CONTRACTS[0]);
@@ -54,6 +210,13 @@ export default function TradeEaseZBMonitor() {
   const currentPrice = quote?.regularMarketPrice ?? (historical.length > 0 ? historical[historical.length - 1].close : 121.5);
   const currentChange = quote?.regularMarketChange || 0;
   const currentChangePct = quote?.regularMarketChangePercent || 0;
+
+  // Strategy Analyzer inputs
+  const [analyzerDTE, setAnalyzerDTE] = useState(80);
+  const [analyzerOTM, setAnalyzerOTM] = useState(90);
+  const [analyzerBias, setAnalyzerBias] = useState<'bullish' | 'neutral' | 'bearish'>(
+    currentChange > 0.1 ? 'bullish' : currentChange < -0.1 ? 'bearish' : 'neutral'
+  );
 
   // Fetch live quote for the selected contract
   const fetchQuote = async (symbol: string) => {
@@ -403,8 +566,107 @@ export default function TradeEaseZBMonitor() {
           </div>
         </div>
 
+        {/* Strategy Analyzer & Recommendations */}
+        <div className="rounded-3xl border border-white/10 bg-zinc-900 p-6">
+          <div className="font-semibold text-xl mb-4">Strategy Analyzer & Recommendations</div>
+          <p className="text-sm text-zinc-400 mb-4">
+            Your style: 60/80/100 DTE, far OTM (90 OTM / ~10-15 delta), short premium on /ZB. 
+            Estimates are demo-only (based on distance + DTE). Not financial advice.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">DTE</label>
+              <select
+                value={analyzerDTE}
+                onChange={(e) => setAnalyzerDTE(parseInt(e.target.value))}
+                className="bg-zinc-950 border border-white/10 w-full rounded-2xl px-4 py-2"
+              >
+                <option value={60}>60 DTE</option>
+                <option value={80}>80 DTE</option>
+                <option value={100}>100 DTE</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">OTM %</label>
+              <input
+                type="number"
+                value={analyzerOTM}
+                onChange={(e) => setAnalyzerOTM(Math.max(70, Math.min(95, parseInt(e.target.value) || 90)))}
+                className="bg-zinc-950 border border-white/10 w-full rounded-2xl px-4 py-2"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Bias (auto from price move)</label>
+              <select
+                value={analyzerBias}
+                onChange={(e) => setAnalyzerBias(e.target.value as any)}
+                className="bg-zinc-950 border border-white/10 w-full rounded-2xl px-4 py-2"
+              >
+                <option value="bullish">Bullish (price up)</option>
+                <option value="neutral">Neutral</option>
+                <option value="bearish">Bearish (price down)</option>
+              </select>
+            </div>
+          </div>
+
+          {(() => {
+            const rec = getRecommendations(currentPrice, analyzerDTE, analyzerOTM, analyzerBias);
+            return (
+              <div className="space-y-4">
+                <div className="p-4 bg-zinc-950 rounded-2xl border border-emerald-900/50">
+                  <div className="font-semibold text-emerald-400 mb-1">Recommended Strategy</div>
+                  <div className="text-lg">{rec.rec}</div>
+                  <div className="text-sm text-zinc-400 mt-1">{rec.why}</div>
+                  <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    <div>Est. Credit (best): <span className="font-mono text-emerald-400">{rec.bestCredit}</span> pts/contract</div>
+                    <div>Max Profit: <span className="font-mono">{rec.maxProfit}</span></div>
+                    <div>Max Loss: <span className="font-mono text-red-400">{rec.maxLoss}</span></div>
+                    <div>Est. POP: <span className="font-mono">{rec.pop}</span></div>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-sm font-medium mb-2">Price Scanner (current price {toTicks(currentPrice)}, {analyzerOTM}% OTM)</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border border-white/10 rounded-xl overflow-hidden">
+                      <thead className="bg-zinc-800">
+                        <tr>
+                          <th className="p-2 text-left">DTE</th>
+                          <th className="p-2">Put Strike</th>
+                          <th className="p-2">Put Credit</th>
+                          <th className="p-2">Call Strike</th>
+                          <th className="p-2">Call Credit</th>
+                          <th className="p-2">IC Credit (both sides)</th>
+                          <th className="p-2">Est. POP</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {getScannerData(currentPrice, analyzerOTM).map((row, idx) => (
+                          <tr key={idx} className="border-t border-white/10 hover:bg-zinc-950">
+                            <td className="p-2 font-medium">{row.dte}</td>
+                            <td className="p-2 font-mono">{row.putStrike}</td>
+                            <td className="p-2 font-mono text-emerald-400">{row.putCredit}</td>
+                            <td className="p-2 font-mono">{row.callStrike}</td>
+                            <td className="p-2 font-mono text-emerald-400">{row.callCredit}</td>
+                            <td className="p-2 font-mono text-emerald-400">{row.icCredit}</td>
+                            <td className="p-2">{row.pop}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="text-xs text-zinc-500 mt-2">
+                    Credits are demo estimates. For 90 OTM long DTE, ICs and credit spreads typically offer the best risk/reward for premium sellers in neutral-to-mildly directional markets.
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
         <div className="text-center text-xs text-zinc-500 pt-8">
-          Demo interface • Prices in traditional 32nds format (e.g. 112'21') • For monitoring only
+          Demo interface • Prices in traditional 32nds format (e.g. 112'21') • For monitoring only. No real orders.
         </div>
       </div>
     </div>
