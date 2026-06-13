@@ -14,43 +14,23 @@ interface FuturesQuote {
   timestamp: number;
 }
 
-interface PricePoint {
+interface HistoricalPoint {
   time: number;
-  price: number;
+  high: number;
+  low: number;
+  close: number;
 }
 
-interface StrikeRow {
-  strike: number;
-  putBid: number;
-  putAsk: number;
-  callBid: number;
-  callAsk: number;
-}
+// /ZB (30-Year Treasury Bond Futures) contracts
+// Format: ZB + MonthCode + LastTwoDigitsOfYear + .F
+const ZB_CONTRACTS = [
+  { symbol: 'ZBH26.F', label: 'Mar 2026 (H26)' },
+  { symbol: 'ZBM26.F', label: 'Jun 2026 (M26)' },
+  { symbol: 'ZBU26.F', label: 'Sep 2026 (U26)' },
+  { symbol: 'ZBZ26.F', label: 'Dec 2026 (Z26)' },
+  { symbol: 'ZBH27.F', label: 'Mar 2027 (H27)' },
+];
 
-interface Position {
-  id: number;
-  underlying: string;
-  strategy: string;
-  description: string;
-  qty: number;
-  credit: number;
-  entryPrice: number;
-  currentPnl: number;
-}
-
-const UNDERLYINGS = ['ZB=F', 'ZN=F'] as const;
-type Underlying = typeof UNDERLYINGS[number];
-
-const STRATEGY_OPTIONS = [
-  { value: 'short_put', label: 'Short Put' },
-  { value: 'short_call', label: 'Short Call' },
-  { value: 'put_credit_spread', label: 'Bull Put Credit Spread' },
-  { value: 'call_credit_spread', label: 'Bear Call Credit Spread' },
-] as const;
-
-type StrategyType = typeof STRATEGY_OPTIONS[number]['value'];
-
-// Convert decimal futures price to traditional 32nds notation: 112'21'
 function toTicks(price: number): string {
   const whole = Math.floor(price);
   const frac = price - whole;
@@ -58,473 +38,372 @@ function toTicks(price: number): string {
   return `${whole}'${thirtySeconds.toString().padStart(2, '0')}'`;
 }
 
-export default function TradeEaseShortOptions() {
-  // Live Market Data
-  const [quotes, setQuotes] = useState<Record<string, FuturesQuote>>({});
-  const [selectedUnderlying, setSelectedUnderlying] = useState<Underlying>('ZN=F');
-  const [priceHistory, setPriceHistory] = useState<Record<string, PricePoint[]>>({ 'ZN=F': [], 'ZB=F': [] });
-  const [isLoadingPrice, setIsLoadingPrice] = useState(false);
+export default function TradeEaseZBMonitor() {
+  // Selected contract
+  const [selectedContract, setSelectedContract] = useState(ZB_CONTRACTS[0]);
 
-  // 6-month historical data for the chart
-  const [historicalData, setHistoricalData] = useState<PricePoint[]>([]);
+  // Live data for selected contract
+  const [quote, setQuote] = useState<FuturesQuote | null>(null);
+  const [isLoadingQuote, setIsLoadingQuote] = useState(false);
+
+  // 6-month historical high/low data
+  const [historical, setHistorical] = useState<HistoricalPoint[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
-  // Trading State (demo mode)
-  const [selectedStrategy, setSelectedStrategy] = useState<StrategyType>('short_put');
-  const [expiration, setExpiration] = useState('2026-06-20');
-  const [shortStrike, setShortStrike] = useState(112.5);
-  const [longStrike, setLongStrike] = useState(112.0);
-  const [quantity, setQuantity] = useState(1);
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [showConfirm, setShowConfirm] = useState(false);
+  // Current price for display (from live or history)
+  const currentPrice = quote?.regularMarketPrice ?? (historical.length > 0 ? historical[historical.length - 1].close : 121.5);
 
-  const currentPrice = quotes[selectedUnderlying]?.regularMarketPrice || (selectedUnderlying === 'ZN=F' ? 112.75 : 121.40);
-  const currentChange = quotes[selectedUnderlying]?.regularMarketChange || 0;
-  const currentChangePct = quotes[selectedUnderlying]?.regularMarketChangePercent || 0;
-
-  // Dynamic strikes around live price
-  const generateChain = (price: number): StrikeRow[] => {
-    const base = Math.round(price * 2) / 2;
-    const strikes: number[] = [];
-    for (let i = -6; i <= 6; i++) strikes.push(base + i * 0.5);
-    return strikes.map(strike => {
-      const dist = Math.abs(strike - price);
-      const basePremium = Math.max(0.04, (0.85 - dist * 0.12) + (Math.random() - 0.5) * 0.03);
-      const putBid = Math.max(0.03, basePremium * (strike < price ? 1.15 : 0.85));
-      const putAsk = putBid + 0.03;
-      const callBid = Math.max(0.03, basePremium * (strike > price ? 1.15 : 0.85));
-      const callAsk = callBid + 0.03;
-      return { strike, putBid, putAsk, callBid, callAsk };
-    });
+  // Fetch live quote for the selected contract
+  const fetchQuote = async (symbol: string) => {
+    setIsLoadingQuote(true);
+    try {
+      const res = await fetch(`/api/market/quote?symbols=${encodeURIComponent(symbol)}`);
+      const json = await res.json();
+      if (json.success && json.data.length > 0) {
+        setQuote(json.data[0]);
+      }
+    } catch (e) {
+      // Fallback simulated
+      const base = 121.5;
+      const simulated = base + (Math.random() - 0.5) * 0.5;
+      setQuote({
+        symbol,
+        shortName: '30-Year Treasury Bond Futures',
+        regularMarketPrice: simulated,
+        regularMarketChange: (Math.random() - 0.5) * 0.3,
+        regularMarketChangePercent: (Math.random() - 0.5) * 0.25,
+        regularMarketDayHigh: simulated + 0.4,
+        regularMarketDayLow: simulated - 0.35,
+        regularMarketPreviousClose: base,
+        timestamp: Date.now(),
+      });
+    }
+    setIsLoadingQuote(false);
   };
 
-  const chain = generateChain(currentPrice);
-
-  // Live price polling (for current price + intraday updates)
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-
-    const fetchPrices = async () => {
-      setIsLoadingPrice(true);
-      try {
-        const res = await fetch('/api/market/quote?symbols=ZB=F,ZN=F');
-        const json = await res.json();
-        const newQuotes: Record<string, FuturesQuote> = {};
-        json.data.forEach((q: any) => {
-          newQuotes[q.symbol] = {
-            symbol: q.symbol,
-            shortName: q.shortName,
-            regularMarketPrice: q.regularMarketPrice,
-            regularMarketChange: q.regularMarketChange,
-            regularMarketChangePercent: q.regularMarketChangePercent,
-            regularMarketDayHigh: q.regularMarketDayHigh,
-            regularMarketDayLow: q.regularMarketDayLow,
-            regularMarketPreviousClose: q.regularMarketPreviousClose,
-            timestamp: json.timestamp,
-          };
-        });
-        setQuotes(newQuotes);
-
-        // Append to short-term history for smooth live feel on the right edge of the chart
-        setPriceHistory(prev => {
-          const updated = { ...prev };
-          (['ZB=F', 'ZN=F'] as const).forEach(sym => {
-            const q = newQuotes[sym];
-            if (q) {
-              const hist = [...(updated[sym] || [])];
-              hist.push({ time: Date.now(), price: q.regularMarketPrice });
-              if (hist.length > 50) hist.shift();
-              updated[sym] = hist;
-            }
-          });
-          return updated;
-        });
-      } catch (e) {
-        // Realistic simulated ticks
-        setQuotes(prev => {
-          const u: any = { ...prev };
-          (['ZB=F', 'ZN=F'] as const).forEach(sym => {
-            const base = sym === 'ZN=F' ? 112.8 : 121.5;
-            const curr = u[sym]?.regularMarketPrice || base;
-            const tick = (Math.random() - 0.5) * (sym === 'ZN=F' ? 0.11 : 0.17);
-            const np = Math.max(base - 2.5, Math.min(base + 2.5, curr + tick));
-            u[sym] = { ...(u[sym] || { symbol: sym, shortName: sym === 'ZN=F' ? '10Y T-Note' : '30Y Bond' }), regularMarketPrice: np };
-          });
-          return u;
-        });
-
-        setPriceHistory(prev => {
-          const u = { ...prev };
-          (['ZB=F', 'ZN=F'] as const).forEach(sym => {
-            const h = [...(u[sym] || [])];
-            const last = h[h.length - 1]?.price || (sym === 'ZN=F' ? 112.8 : 121.5);
-            h.push({ time: Date.now(), price: last + (Math.random() - 0.5) * (sym === 'ZN=F' ? 0.11 : 0.17) });
-            if (h.length > 50) h.shift();
-            u[sym] = h;
-          });
-          return u;
+  // Fetch 6-month high/low history for the selected contract
+  const fetchHistory = async (symbol: string) => {
+    setIsLoadingHistory(true);
+    try {
+      const res = await fetch(`/api/market/history?symbol=${encodeURIComponent(symbol)}`);
+      const json = await res.json();
+      if (json.success && json.data?.length) {
+        setHistorical(json.data);
+      }
+    } catch (e) {
+      // Fallback data
+      const base = 121.5;
+      const points: HistoricalPoint[] = [];
+      const start = Date.now() - 180 * 24 * 60 * 60 * 1000;
+      let close = base;
+      for (let i = 0; i < 130; i++) {
+        const t = start + i * 24 * 60 * 60 * 1000;
+        const move = (Math.random() - 0.5) * 1.1;
+        const h = close + Math.abs(move) * 0.7;
+        const l = close - Math.abs(move) * 0.7;
+        close = close + move;
+        close = Math.max(base - 3.5, Math.min(base + 3.5, close));
+        points.push({
+          time: t,
+          high: Math.round(h * 1000) / 1000,
+          low: Math.round(l * 1000) / 1000,
+          close: Math.round(close * 1000) / 1000,
         });
       }
-      setIsLoadingPrice(false);
-    };
+      setHistorical(points);
+    }
+    setIsLoadingHistory(false);
+  };
 
-    fetchPrices();
-    interval = setInterval(fetchPrices, 8000);
+  // Load data when contract changes
+  useEffect(() => {
+    fetchQuote(selectedContract.symbol);
+    fetchHistory(selectedContract.symbol);
+  }, [selectedContract]);
+
+  // Live polling for the selected contract (updates current price)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchQuote(selectedContract.symbol);
+    }, 8000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedContract]);
 
-  // Fetch 6-month daily history when symbol changes
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadHistory = async () => {
-      setIsLoadingHistory(true);
-      try {
-        const res = await fetch(`/api/market/history?symbol=${selectedUnderlying}`);
-        const json = await res.json();
-        if (!cancelled && json.success && json.data?.length) {
-          setHistoricalData(json.data);
-        }
-      } catch (e) {
-        // fallback data will be provided by the API itself
-        console.log('History fetch fallback used');
-      }
-      setIsLoadingHistory(false);
-    };
-
-    loadHistory();
-
-    return () => { cancelled = true; };
-  }, [selectedUnderlying]);
-
-  const currentQuote = quotes[selectedUnderlying];
-
-  // Live calculations
-  const calc = React.useMemo(() => {
-    const credit = Math.max(0.04, 0.72 - Math.abs(shortStrike - currentPrice) * 0.11);
-    const qty = quantity;
-    let totalCredit = 0, maxProfit = 0, maxLoss = 0, breakeven = '';
-
-    if (selectedStrategy === 'short_put') {
-      totalCredit = credit * 100 * qty;
-      maxProfit = totalCredit;
-      maxLoss = (shortStrike * 100 * qty) - totalCredit;
-      breakeven = (shortStrike - credit).toFixed(2);
-    } else if (selectedStrategy === 'short_call') {
-      totalCredit = credit * 100 * qty;
-      maxProfit = totalCredit;
-      maxLoss = 999999;
-      breakeven = (shortStrike + credit).toFixed(2);
-    } else if (selectedStrategy === 'put_credit_spread') {
-      const net = Math.max(0.03, credit - 0.18);
-      totalCredit = net * 100 * qty;
-      maxProfit = totalCredit;
-      maxLoss = Math.max(0.25, shortStrike - longStrike) * 100 * qty - totalCredit;
-      breakeven = (shortStrike - net).toFixed(2);
-    } else if (selectedStrategy === 'call_credit_spread') {
-      const net = Math.max(0.03, credit - 0.18);
-      totalCredit = net * 100 * qty;
-      maxProfit = totalCredit;
-      maxLoss = Math.max(0.25, longStrike - shortStrike) * 100 * qty - totalCredit;
-      breakeven = (shortStrike + net).toFixed(2);
+  // High/Low 6-month SVG chart
+  const renderHighLowChart = () => {
+    if (historical.length === 0) {
+      return <div className="h-64 flex items-center justify-center text-zinc-500">Loading 6-month high/low chart...</div>;
     }
 
-    return {
-      totalCredit: totalCredit.toFixed(2),
-      maxProfit: maxProfit.toFixed(2),
-      maxLoss: maxLoss === 999999 ? 'Undefined' : maxLoss.toFixed(2),
-      breakeven,
-    };
-  }, [selectedStrategy, shortStrike, longStrike, quantity, currentPrice]);
+    const data = historical;
+    const highs = data.map(d => d.high);
+    const lows = data.map(d => d.low);
+    const minLow = Math.min(...lows);
+    const maxHigh = Math.max(...highs);
+    const range = maxHigh - minLow || 1;
 
-  // 6-month daily chart with live price overlay
-  const renderPriceChart = () => {
-    const hist = historicalData.length > 0 ? historicalData : (priceHistory[selectedUnderlying] || []);
-    if (hist.length < 3) return <div className="h-40 flex items-center justify-center text-zinc-500 text-sm">Loading 6-month chart…</div>;
+    const w = 820;
+    const h = 260;
+    const padX = 50;
+    const padY = 20;
 
-    const prices = hist.map(p => p.price);
-    const minP = Math.min(...prices);
-    const maxP = Math.max(...prices);
-    const r = maxP - minP || 0.4;
-    const w = 620;
-    const h = 200;
-    const pad = 8;
-    const labelPad = 52; // space for y-axis labels in ticks
+    const points = data.map((d, i) => {
+      const x = padX + (i / (data.length - 1)) * (w - padX * 2);
+      const yHigh = padY + ((maxHigh - d.high) / range) * (h - padY * 2);
+      const yLow = padY + ((maxHigh - d.low) / range) * (h - padY * 2);
+      return { x, yHigh, yLow, close: d.close };
+    });
 
-    const pts = hist.map((p, i) => {
-      const x = labelPad + pad + (i / (hist.length - 1)) * (w - labelPad - pad * 2);
-      const y = pad + ((maxP - p.price) / r) * (h - pad * 2);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(' ');
-
-    const lastPrice = prices[prices.length - 1];
-    const firstPrice = prices[0];
-    const col = lastPrice >= firstPrice ? '#22c55e' : '#ef4444';
-
-    // Y ticks at nice levels (approx 5 levels)
-    const tickValues = [];
+    // Y ticks (approx 5 levels in ticks format)
+    const yTicks = [];
     for (let i = 0; i <= 4; i++) {
-      tickValues.push(minP + (i * r) / 4);
+      const val = minLow + (i * range) / 4;
+      const y = padY + ((maxHigh - val) / range) * (h - padY * 2);
+      yTicks.push({ val, y });
+    }
+
+    // X month labels (rough)
+    const monthLabels: { x: number; label: string }[] = [];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const firstTime = data[0].time;
+    const lastTime = data[data.length - 1].time;
+    const sixMonthsMs = 1000 * 60 * 60 * 24 * 30 * 6;
+
+    for (let m = 0; m < 6; m++) {
+      const t = firstTime + (m * sixMonthsMs) / 6;
+      const idx = data.findIndex(d => d.time >= t);
+      if (idx >= 0) {
+        const x = padX + (idx / (data.length - 1)) * (w - padX * 2);
+        const date = new Date(t);
+        monthLabels.push({
+          x,
+          label: months[date.getMonth()],
+        });
+      }
     }
 
     return (
-      <div className="relative">
+      <div className="relative bg-zinc-950 border border-zinc-800 rounded-2xl p-4 overflow-hidden">
         <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} className="overflow-visible">
-          {/* Horizontal grid + y labels in ticks format */}
-          {tickValues.map((val, idx) => {
-            const y = pad + ((maxP - val) / r) * (h - pad * 2);
-            return (
-              <g key={idx}>
-                <line x1={labelPad} y1={y} x2={w - pad} y2={y} stroke="#27272a" strokeWidth="1" />
-                <text x={labelPad - 4} y={y + 3} textAnchor="end" fontSize="10" fill="#3f3f46">
-                  {toTicks(val)}
-                </text>
-              </g>
-            );
-          })}
+          {/* Grid lines */}
+          {yTicks.map((t, i) => (
+            <line
+              key={i}
+              x1={padX}
+              y1={t.y}
+              x2={w - padX}
+              y2={t.y}
+              stroke="#27272a"
+              strokeWidth="1"
+            />
+          ))}
 
-          {/* Main price line */}
-          <polyline
-            fill="none"
-            stroke={col}
-            strokeWidth="2"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            points={pts}
-          />
+          {/* High-Low lines */}
+          {points.map((p, i) => (
+            <g key={i}>
+              {/* High to Low vertical line */}
+              <line
+                x1={p.x}
+                y1={p.yHigh}
+                x2={p.x}
+                y2={p.yLow}
+                stroke="#64748b"
+                strokeWidth="1.5"
+              />
+              {/* Close mark (small horizontal) */}
+              <line
+                x1={p.x - 3}
+                y1={padY + ((maxHigh - p.close) / range) * (h - padY * 2)}
+                x2={p.x + 3}
+                y2={padY + ((maxHigh - p.close) / range) * (h - padY * 2)}
+                stroke="#22c55e"
+                strokeWidth="2"
+              />
+            </g>
+          ))}
 
-          {/* Current live price dot */}
-          <circle
-            cx={w - pad}
-            cy={pad + ((maxP - lastPrice) / r) * (h - pad * 2)}
-            r="4"
-            fill={col}
-            stroke="#fff"
-            strokeWidth="1"
-          />
+          {/* Current price line (live) */}
+          {currentPrice && (
+            <line
+              x1={padX}
+              y1={padY + ((maxHigh - currentPrice) / range) * (h - padY * 2)}
+              x2={w - padX}
+              y2={padY + ((maxHigh - currentPrice) / range) * (h - padY * 2)}
+              stroke="#eab308"
+              strokeWidth="1"
+              strokeDasharray="4 2"
+            />
+          )}
+
+          {/* Y axis labels in ticks format */}
+          {yTicks.map((t, i) => (
+            <text
+              key={i}
+              x={padX - 8}
+              y={t.y + 4}
+              textAnchor="end"
+              fontSize="11"
+              fill="#64748b"
+              className="font-mono"
+            >
+              {toTicks(t.val)}
+            </text>
+          ))}
+
+          {/* X axis month labels */}
+          {monthLabels.map((m, i) => (
+            <text
+              key={i}
+              x={m.x}
+              y={h - 4}
+              textAnchor="middle"
+              fontSize="10"
+              fill="#64748b"
+            >
+              {m.label}
+            </text>
+          ))}
         </svg>
 
-        {/* Current price label in ticks */}
-        <div className="absolute top-2 right-3 bg-zinc-950/80 px-2 py-0.5 rounded text-xs font-mono">
-          {toTicks(lastPrice)}
+        <div className="flex justify-between text-xs text-zinc-500 mt-2 px-2">
+          <div>6 months ago</div>
+          <div>Today (live overlay in yellow)</div>
         </div>
       </div>
     );
   };
 
-  const currentSymbolDisplay = selectedUnderlying === 'ZN=F' ? '/ZN (10Y)' : '/ZB (30Y)';
-
-  const selectStrike = (strike: number) => {
-    if (selectedStrategy === 'short_put' || selectedStrategy === 'short_call') {
-      setShortStrike(strike);
-    } else {
-      setShortStrike(strike);
-      setLongStrike(selectedStrategy === 'put_credit_spread' ? strike - 0.5 : strike + 0.5);
-    }
-  };
-
-  const executeTrade = () => {
-    const newP: Position = {
-      id: Date.now(),
-      underlying: selectedUnderlying,
-      strategy: STRATEGY_OPTIONS.find(s => s.value === selectedStrategy)!.label,
-      description: `${shortStrike}${selectedStrategy.includes('put') ? 'P' : 'C'}${longStrike ? ` / ${longStrike}` : ''}`,
-      qty: quantity,
-      credit: parseFloat(calc.totalCredit),
-      entryPrice: currentPrice,
-      currentPnl: parseFloat(calc.totalCredit) * 0.38,
-    };
-    setPositions(p => [newP, ...p]);
-    setShowConfirm(false);
-  };
-
-  const closePos = (id: number) => setPositions(p => p.filter(x => x.id !== id));
+  const currentDisplayPrice = currentPrice ? toTicks(currentPrice) : '—';
+  const dayHigh = quote?.regularMarketDayHigh ? toTicks(quote.regularMarketDayHigh) : '—';
+  const dayLow = quote?.regularMarketDayLow ? toTicks(quote.regularMarketDayLow) : '—';
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans">
       {/* Header */}
-      <header className="border-b border-white/10 bg-zinc-950/90 backdrop-blur sticky top-0 z-50">
+      <header className="border-b border-white/10 bg-zinc-950/95 backdrop-blur sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-2xl bg-emerald-500 flex items-center justify-center">
-                <span className="text-black font-bold text-2xl tracking-[-2.5px]">TE</span>
-              </div>
-              <div>
-                <div className="font-semibold text-2xl tracking-tighter">TradeEase</div>
-                <div className="text-[10px] text-emerald-400 -mt-1">SHORT OPTIONS • RATES</div>
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-2xl bg-emerald-500 flex items-center justify-center">
+              <span className="text-black font-bold text-2xl tracking-[-2.5px]">TE</span>
             </div>
-            <div className="text-xs px-3 py-1 bg-zinc-900 rounded-full border border-white/10">DEMO MODE • NO LOGIN</div>
+            <div>
+              <div className="font-semibold text-2xl tracking-tighter">TradeEase</div>
+              <div className="text-[10px] text-emerald-400 -mt-1">/ZB FUTURES CONTRACT MONITOR</div>
+            </div>
           </div>
-          <div className="text-xs text-zinc-400">Live data on /ZB &amp; /ZN</div>
+          <div className="text-xs px-3 py-1 bg-zinc-900 rounded-full border border-white/10">
+            DEMO • LIVE DATA (Yahoo Finance)
+          </div>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-6 py-6 space-y-8">
-        {/* Live Prices + Chart */}
-        <div>
-          <div className="uppercase text-xs tracking-[2px] text-zinc-400 mb-3">Live Futures Market Data</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            {(['ZN=F', 'ZB=F'] as const).map(sym => {
-              const q = quotes[sym];
-              const sel = selectedUnderlying === sym;
-              return (
-                <button key={sym} onClick={() => setSelectedUnderlying(sym)}
-                  className={`p-5 rounded-3xl border text-left transition ${sel ? 'border-emerald-500 bg-zinc-900' : 'border-white/10 hover:border-white/20 bg-zinc-900/70'}`}>
-                  <div className="text-sm text-zinc-400">{sym === 'ZN=F' ? '10-Year T-Note (/ZN)' : '30-Year Bond (/ZB)'}</div>
-                  <div className="font-mono text-4xl font-semibold tracking-tighter mt-1">
-                    {q ? toTicks(q.regularMarketPrice) : '—'}
-                  </div>
-                  {q && <div className={q.regularMarketChange >= 0 ? 'text-emerald-400' : 'text-red-400'}>{q.regularMarketChange >= 0 ? '+' : ''}{q.regularMarketChange.toFixed(3)} ({q.regularMarketChangePercent.toFixed(2)}%)</div>}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Price Chart */}
-          <div className="rounded-3xl border border-white/10 bg-zinc-900 p-6">
-            <div className="font-semibold mb-2">{currentSymbolDisplay} — 6-Month Daily Chart</div>
-            <div className="bg-black/40 rounded-2xl p-3 border border-white/10">
-              {renderPriceChart()}
-            </div>
-            <div className="text-[10px] text-center text-zinc-500 mt-2">6-month daily closes (Yahoo Finance). Right edge reflects latest live price.</div>
-          </div>
+      <div className="max-w-5xl mx-auto px-6 py-8">
+        <div className="mb-8">
+          <h1 className="text-4xl font-semibold tracking-tighter mb-2">/ZB Contract Monitor</h1>
+          <p className="text-zinc-400">
+            Select a specific /ZB futures contract to monitor live price and 6-month high/low chart.
+          </p>
         </div>
 
-        {/* Strategy Builder */}
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-          <div className="xl:col-span-7">
-            <div className="mb-2 text-xs uppercase tracking-[2px] text-zinc-400">Options Chain (centered on live price)</div>
-            <div className="rounded-3xl border border-white/10 bg-zinc-900 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 text-xs text-zinc-400">
-                    <th className="pl-6 text-left py-3">Strike</th>
-                    <th>Put Bid / Ask</th>
-                    <th>Call Bid / Ask</th>
-                    <th className="pr-6 text-right">Select Short</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {chain.map(r => (
-                    <tr key={r.strike} className="border-t border-white/10 hover:bg-zinc-950/50">
-                      <td className="pl-6 py-2 font-mono font-medium">{r.strike.toFixed(1)}</td>
-                      <td className="text-emerald-400 font-mono">{r.putBid.toFixed(2)} / {r.putAsk.toFixed(2)}</td>
-                      <td className="text-emerald-400 font-mono">{r.callBid.toFixed(2)} / {r.callAsk.toFixed(2)}</td>
-                      <td className="pr-6 text-right">
-                        <button onClick={() => selectStrike(r.strike)} className="text-xs px-3 py-1 rounded-xl border border-white/10 hover:bg-emerald-500 hover:text-black">Select</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="xl:col-span-5">
-            <div className="rounded-3xl border border-white/10 bg-zinc-900 p-6">
-              <div className="uppercase text-xs tracking-widest text-zinc-400 mb-3">Short Options Builder</div>
-
-              <div className="flex flex-wrap gap-2 mb-4">
-                {STRATEGY_OPTIONS.map(s => (
-                  <button key={s.value} onClick={() => setSelectedStrategy(s.value)} className={`px-4 py-2 text-sm rounded-2xl border transition ${selectedStrategy === s.value ? 'border-emerald-500 bg-zinc-800' : 'border-white/10 hover:bg-zinc-800'}`}>
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 text-sm mb-5">
-                <div>
-                  <div className="text-xs text-zinc-400 mb-1">Expiration</div>
-                  <select value={expiration} onChange={e => setExpiration(e.target.value)} className="bg-zinc-900 border border-white/10 w-full rounded-2xl px-3 py-2">
-                    <option>2026-06-20</option><option>2026-06-27</option><option>2026-07-18</option>
-                  </select>
-                </div>
-                <div>
-                  <div className="text-xs text-zinc-400 mb-1">Contracts</div>
-                  <input type="number" value={quantity} min={1} onChange={e => setQuantity(Math.max(1, +e.target.value || 1))} className="bg-zinc-900 border border-white/10 w-full rounded-2xl px-3 py-2" />
-                </div>
-                <div>
-                  <div className="text-xs text-zinc-400 mb-1">Short Strike</div>
-                  <input type="number" step="0.25" value={shortStrike} onChange={e => setShortStrike(+e.target.value)} className="bg-zinc-900 border border-white/10 w-full rounded-2xl px-3 py-2 font-mono" />
-                </div>
-                {selectedStrategy.includes('spread') && (
-                  <div>
-                    <div className="text-xs text-zinc-400 mb-1">Long Strike</div>
-                    <input type="number" step="0.25" value={longStrike} onChange={e => setLongStrike(+e.target.value)} className="bg-zinc-900 border border-white/10 w-full rounded-2xl px-3 py-2 font-mono" />
-                  </div>
-                )}
-              </div>
-
-              <div className="bg-zinc-950 rounded-2xl p-5 border border-white/10 mb-5 text-sm">
-                <div className="grid grid-cols-2 gap-y-2">
-                  <div>Total Credit</div><div className="font-mono text-emerald-400 text-right">${calc.totalCredit}</div>
-                  <div>Max Profit</div><div className="font-mono text-emerald-400 text-right">${calc.maxProfit}</div>
-                  <div>Max Loss</div><div className="font-mono text-red-400 text-right">${calc.maxLoss}</div>
-                  <div>Breakeven</div><div className="font-mono text-right">{calc.breakeven}</div>
-                </div>
-              </div>
-
-              <button onClick={() => setShowConfirm(true)} className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 transition text-black font-semibold rounded-2xl">
-                SIMULATE SHORT OPTIONS TRADE
+        {/* Contract Selector */}
+        <div className="mb-8">
+          <div className="text-sm text-zinc-400 mb-2 uppercase tracking-widest">Select Contract</div>
+          <div className="flex flex-wrap gap-3">
+            {ZB_CONTRACTS.map((contract) => (
+              <button
+                key={contract.symbol}
+                onClick={() => setSelectedContract(contract)}
+                className={`px-5 py-3 rounded-2xl border text-left transition min-w-[160px] ${
+                  selectedContract.symbol === contract.symbol
+                    ? 'border-emerald-500 bg-zinc-900'
+                    : 'border-white/10 hover:bg-zinc-900'
+                }`}
+              >
+                <div className="font-mono text-lg font-semibold">{contract.symbol}</div>
+                <div className="text-sm text-zinc-400">{contract.label}</div>
               </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Current Contract Monitor */}
+        <div className="rounded-3xl border border-white/10 bg-zinc-900 p-8 mb-8">
+          <div className="flex items-baseline justify-between mb-6">
+            <div>
+              <div className="font-mono text-3xl font-semibold tracking-tighter">
+                {selectedContract.symbol}
+              </div>
+              <div className="text-xl text-zinc-400">{selectedContract.label}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm text-zinc-400">Last Price</div>
+              <div className="font-mono text-6xl font-semibold tracking-[-3px] text-emerald-400">
+                {currentPrice ? toTicks(currentPrice) : '—'}
+              </div>
+              {currentPrice && (
+                <div className={`text-sm mt-1 ${currentChange >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {currentChange >= 0 ? '+' : ''}{currentChange.toFixed(3)} ({currentChangePct.toFixed(2)}%)
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="bg-zinc-950 rounded-2xl p-4">
+              <div className="text-zinc-400 text-xs">Daily High</div>
+              <div className="font-mono text-2xl font-semibold mt-1 text-emerald-400">
+                {quote?.regularMarketDayHigh ? toTicks(quote.regularMarketDayHigh) : '—'}
+              </div>
+            </div>
+            <div className="bg-zinc-950 rounded-2xl p-4">
+              <div className="text-zinc-400 text-xs">Daily Low</div>
+              <div className="font-mono text-2xl font-semibold mt-1 text-red-400">
+                {quote?.regularMarketDayLow ? toTicks(quote.regularMarketDayLow) : '—'}
+              </div>
+            </div>
+            <div className="bg-zinc-950 rounded-2xl p-4">
+              <div className="text-zinc-400 text-xs">Previous Close</div>
+              <div className="font-mono text-2xl font-semibold mt-1">
+                {quote?.regularMarketPreviousClose ? toTicks(quote.regularMarketPreviousClose) : '—'}
+              </div>
+            </div>
+            <div className="bg-zinc-950 rounded-2xl p-4">
+              <div className="text-zinc-400 text-xs">Last Updated</div>
+              <div className="text-sm mt-1 text-zinc-400">
+                {quote ? new Date(quote.timestamp).toLocaleTimeString() : '—'}
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Positions */}
+        {/* 6-Month High/Low Chart */}
         <div>
-          <div className="font-semibold mb-3">Simulated Open Short Positions</div>
-          <div className="rounded-3xl border border-white/10 bg-zinc-900 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-white/10 text-xs text-zinc-400">
-                  <th className="pl-6 text-left py-3">Underlying / Strategy</th>
-                  <th>Description</th>
-                  <th>Qty</th>
-                  <th>Credit</th>
-                  <th>P/L</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {positions.length === 0 && <tr><td colSpan={6} className="pl-6 py-6 text-zinc-400">No positions yet. Build and simulate a trade above.</td></tr>}
-                {positions.map(p => (
-                  <tr key={p.id} className="border-t border-white/10">
-                    <td className="pl-6 py-2.5">{p.underlying} — {p.strategy}</td>
-                    <td className="font-mono text-xs">{p.description}</td>
-                    <td>{p.qty}</td>
-                    <td className="text-emerald-400">${p.credit.toFixed(2)}</td>
-                    <td className={p.currentPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>${p.currentPnl.toFixed(2)}</td>
-                    <td className="pr-6 text-right"><button onClick={() => closePos(p.id)} className="text-xs px-3 py-1 border border-white/10 rounded-xl hover:bg-zinc-800">Close</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="flex items-center justify-between mb-3 px-1">
+            <div>
+              <div className="font-semibold text-xl">6-Month High/Low Chart</div>
+              <div className="text-xs text-zinc-400">Daily high and low for {selectedContract.label}</div>
+            </div>
+            {isLoadingHistory && <div className="text-xs text-zinc-400">Loading history...</div>}
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-zinc-900 p-6">
+            {renderHighLowChart ? (
+              renderHighLowChart()
+            ) : (
+              <div className="h-64 flex items-center justify-center text-zinc-500">
+                Select a contract to load the 6-month high/low chart
+              </div>
+            )}
+          </div>
+          <div className="text-[10px] text-zinc-500 mt-2 px-1">
+            Vertical lines show daily high-to-low range. Yellow dashed line = current live price.
+            Data via Yahoo Finance proxy.
           </div>
         </div>
-      </div>
 
-      {showConfirm && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-zinc-900 rounded-3xl border border-white/10 w-full max-w-md p-7">
-            <div className="font-semibold text-xl mb-4">Confirm Simulated Trade</div>
-            <div className="text-sm space-y-1 mb-6 text-zinc-300">
-              <div className="flex justify-between"><span>Underlying</span><span className="font-mono">{selectedUnderlying}</span></div>
-              <div className="flex justify-between"><span>Strategy</span><span>{STRATEGY_OPTIONS.find(s => s.value === selectedStrategy)?.label}</span></div>
-              <div className="flex justify-between"><span>Credit</span><span className="text-emerald-400">${calc.totalCredit}</span></div>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={() => setShowConfirm(false)} className="flex-1 py-3 rounded-2xl border border-white/10">Cancel</button>
-              <button onClick={executeTrade} className="flex-1 py-3 rounded-2xl bg-emerald-500 text-black font-semibold">Simulate Trade</button>
-            </div>
-          </div>
+        <div className="text-center text-xs text-zinc-500 pt-8">
+          Demo interface • Prices in traditional 32nds format (e.g. 112'21') • For monitoring only
         </div>
-      )}
-
-      <div className="text-center text-[10px] text-zinc-500 py-6 border-t border-white/10">
-        Live prices from Yahoo Finance (via Next.js proxy). All trading is simulated for educational purposes. No real broker connection.
       </div>
     </div>
   );
